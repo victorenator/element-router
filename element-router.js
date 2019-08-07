@@ -38,9 +38,15 @@ export class ElementRouter extends HTMLElement {
 
     async routeTo(url) {
         this.url = url;
+        let lock;
+        if (this.shadowRoot.getDisplayLock) {
+            lock = this.shadowRoot.getDisplayLock();
+            await lock.acquire();
+        }
         this.shadowRoot.innerHTML = '';
         const element = await this.getMatchingChild([...this.children], this.url);
         element && this.shadowRoot.appendChild(element);
+        lock && lock.commit();
         this.dispatchEvent(new CustomEvent('routechange',{detail:{url:getCurrentUrl()}}))
     }
 
