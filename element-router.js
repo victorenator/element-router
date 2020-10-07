@@ -1,5 +1,6 @@
 export const ROUTERS = [];
 const EMPTY = {};
+const SEGMENTS = Symbol();
 
 export const routeTo = (url) => {
     if (url === getCurrentUrl()) {
@@ -14,7 +15,18 @@ export function getCurrentUrl() {
 }
 
 function createPathSegments(url) {
-    return url.replace(/(^\/+|\/+$)/g, '').split('/');
+    return url.replace(/(^\/+|\/+$)/g, '').split('/').map(segment => {
+        if (segment.startsWith(':')) {
+            const plus = segment.endsWith('+');
+            const star = segment.endsWith('*');
+            const ques = segment.endsWith('?');
+            const param = segment.substr(1, segment.length - (plus || star || ques ? 1 : 0));
+            return {param, plus, star, ques};
+            
+        } else {
+            return segment;
+        }
+    });
 }
 
 export const active = (url, className = 'active') => {
@@ -38,11 +50,13 @@ export class ElementRouter extends HTMLElement {
 
     async routeTo(url) {
         this.url = url;
-        this.displayLock && await this.displayLock.acquire();
-        this.shadowRoot.innerHTML = '';
         const element = await this.getMatchingChild([...this.children], this.url);
-        element && this.shadowRoot.appendChild(element);
-        this.displayLock && await this.displayLock.updateAndCommit();
+        if (this.shadowRoot.firstChildElement) {
+            this.shadowRoot.firstChildElement.replaceWith(element ?? undefined);
+
+        } else if (element) {
+            this.shadowRoot.append(element);
+        }
         this.dispatchEvent(new CustomEvent('routechange',{detail:{url:getCurrentUrl()}}))
     }
 
@@ -82,7 +96,7 @@ export class ElementRouter extends HTMLElement {
         url = url.replace(queryRegex, '');
         const urlSegments = createPathSegments(url);
 
-        for (let child of children) {
+        for (const child of children) {
             const path = child.getAttribute('path');
             if (!path || child.nodeName !== "ELEMENT-ROUTE") {
                 break;
@@ -96,29 +110,27 @@ export class ElementRouter extends HTMLElement {
                 /** Fast exit if direct match */
                 return this.resolveElement(child);
             }
-            const pathSegments = createPathSegments(path);
+            const pathSegments = child[SEGMENTS] ?? (child[SEGMENTS] = createPathSegments(path));
             const matches = {};
 
-            let max = Math.max(urlSegments.length, pathSegments.length);
+            const max = Math.max(urlSegments.length, pathSegments.length);
             let ret;
             for (let i = 0; i < max; i++) {
-                if (pathSegments[i] && pathSegments[i].charAt(0) === ':') {
-                    let param = pathSegments[i].replace(/(^\:|[+*?]+$)/g, ''),
-                        flags = (pathSegments[i].match(/[+*?]+$/) || EMPTY)[0] || '',
-                        plus = ~flags.indexOf('+'),
-                        star = ~flags.indexOf('*'),
-                        val = urlSegments[i] || '';
-                    if (!val && !star && (flags.indexOf('?') < 0 || plus)) {
+                const pathSegment = pathSegments[i];
+                if (pathSegment && pathSegment.param) {
+                    const param = pathSegment.param;
+                    const val = urlSegments[i] || '';
+                    if (!val && !pathSegment.star && (!pathSegment.ques || pathSegment.plus)) {
                         ret = false;
                         break;
                     }
                     matches[param] = decodeURIComponent(val);
-                    if (plus || star) {
+                    if (pathSegment.plus || pathSegment.star) {
                         matches[param] = urlSegments.slice(i).map(decodeURIComponent).join('/');
                         break;
                     }
-                }
-                else if (pathSegments[i] !== urlSegments[i]) {
+
+                } else if (pathSegments[i] !== urlSegments[i]) {
                     ret = false;
                     break;
                 }
